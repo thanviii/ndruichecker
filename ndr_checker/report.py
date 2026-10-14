@@ -179,10 +179,10 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
         print("\nFailed targets:")
         for r in results:
             if r["status"] == "DOWN":
-                print(f"  ✗ {r['target']['name']} ({r['target']['client']}): {r.get('reason', 'unknown')}")
+                print(f"  [FAIL] {r['target']['name']} ({r['target']['client']}): {r.get('reason', 'unknown')}")
 
     if warn > 0:
         print("\nWarning targets:")
         for r in results:
             if r["status"] == "WARN":
-                print(f"  ⚠ {r['target']['name']} ({r['target']['client']}): {r.get('reason', 'warning')}")
+                print(f"  [WARN] {r['target']['name']} ({r['target']['client']}): {r.get('reason', 'warning')}")
