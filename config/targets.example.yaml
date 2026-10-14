@@ -1,0 +1,63 @@
+defaults:
+  timeout: 10
+  retries: 2
+  verify_tls: true
+  expected_status: [200, 301, 302, 303, 307, 308, 401, 403]
+  workers: 10
+  cert_warn_days: 30
+  response_warn_ms: 5000
+
+targets:
+  - client: "ACME Corp"
+    name: "ExtraHop Prod"
+    vendor: "ExtraHop"
+    url: "https://extrahop.acme.com"
+    verify_tls: true
+    timeout: 10
+    tags:
+      - production
+      - tier1
+
+  - client: "ACME Corp"
+    name: "ExtraHop Dev"
+    vendor: "ExtraHop"
+    url: "https://extrahop-dev.acme.com:8443"
+    verify_tls: false
+    timeout: 15
+    tags:
+      - development
+
+  - client: "Beta Industries"
+    name: "Darktrace Console"
+    vendor: "Darktrace"
+    url: "https://darktrace.beta-ind.com"
+    verify_tls: true
+    tags:
+      - production
+
+  - client: "Beta Industries"
+    name: "Vectra Cognito"
+    vendor: "Vectra"
+    url: "https://vectra.beta-ind.com"
+    verify_tls: true
+    expected_status: [200, 401]
+    timeout: 8
+    tags:
+      - production
+
+  - client: "Gamma Ltd"
+    name: "Corelight Sensor"
+    vendor: "Corelight"
+    url: "https://corelight.gamma-ltd.com:6006"
+    verify_tls: false
+    timeout: 12
+    tags:
+      - infrastructure
+
+  - client: "Gamma Ltd"
+    name: "Invalid Host (Test)"
+    url: "https://this-host-does-not-exist-12345.invalid"
+    verify_tls: true
+    timeout: 5
+    tags:
+      - test
