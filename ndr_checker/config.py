@@ -48,6 +48,8 @@ def validate_target(target: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[st
     target.setdefault("timeout", defaults["timeout"])
     target.setdefault("tags", [])
     target.setdefault("proxy", defaults.get("proxy"))
+    target.setdefault("cert_warn_days", defaults["cert_warn_days"])
+    target.setdefault("response_warn_ms", defaults["response_warn_ms"])
 
     # Validate URL format
     url = target["url"]

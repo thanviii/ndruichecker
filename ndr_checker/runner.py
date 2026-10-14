@@ -138,11 +138,11 @@ def run_all_targets(
                     max_status = max(max_status, 1)
 
                 logger.info(
-                    f"✓ {target['name']} ({target['client']}): {result['status']}"
+                    f"[OK] {target['name']} ({target['client']}): {result['status']}"
                 )
 
             except Exception as e:
-                logger.error(f"✗ {target['name']} ({target['client']}): {e}")
+                logger.error(f"[ERR] {target['name']} ({target['client']}): {e}")
                 results.append(
                     {
                         "target": target,

@@ -51,9 +51,9 @@ def format_console_table(results: List[Dict[str, Any]]) -> str:
         for result in by_client[client]:
             name = result["target"]["name"][:29]
             status = result["status"]
-            http_status = str(result.get("http_status") or "-")
-            response_ms = str(result.get("response_ms") or "-")
-            cert_days = str(result.get("cert_days_remaining") or "-")
+            http_status = str(result["http_status"]) if result.get("http_status") is not None else "-"
+            response_ms = str(result["response_ms"]) if result.get("response_ms") is not None else "-"
+            cert_days = str(result["cert_days_remaining"]) if result.get("cert_days_remaining") is not None else "-"
             reason = (result.get("reason") or "OK")[:39]
 
             row = (

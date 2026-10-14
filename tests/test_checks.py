@@ -102,17 +102,15 @@ class TestTlsCheck:
 
     @patch("ndr_checker.checks.ssl.create_default_context")
     @patch("socket.create_connection")
-    def test_tls_success(self, mock_create_conn, mock_ssl_context):
-        # Mock SSL context
+    def test_tls_success_verified(self, mock_create_conn, mock_ssl_context):
+        """TLS with verify=True returns cert expiry from getpeercert()."""
         mock_context = MagicMock()
         mock_ssl_context.return_value = mock_context
 
-        # Mock socket
         mock_sock = MagicMock()
         mock_create_conn.return_value.__enter__ = Mock(return_value=mock_sock)
         mock_create_conn.return_value.__exit__ = Mock(return_value=None)
 
-        # Mock wrapped socket
         mock_wrapped = MagicMock()
         mock_wrapped.getpeercert.return_value = {"notAfter": "May 15 10:34:59 2025 GMT"}
         mock_context.wrap_socket.return_value.__enter__ = Mock(return_value=mock_wrapped)
@@ -123,6 +121,34 @@ class TestTlsCheck:
         assert result["status"] == "pass"
         assert result["reason"] is None
         assert result["cert_days_remaining"] is not None
+
+    @patch("ndr_checker.checks._parse_cert_expiry_from_der")
+    @patch("ndr_checker.checks.ssl.create_default_context")
+    @patch("socket.create_connection")
+    def test_tls_success_unverified(self, mock_create_conn, mock_ssl_context, mock_parse_der):
+        """TLS with verify=False still extracts cert expiry via DER fallback."""
+        mock_context = MagicMock()
+        mock_ssl_context.return_value = mock_context
+
+        mock_sock = MagicMock()
+        mock_create_conn.return_value.__enter__ = Mock(return_value=mock_sock)
+        mock_create_conn.return_value.__exit__ = Mock(return_value=None)
+
+        mock_wrapped = MagicMock()
+        # getpeercert() returns {} when CERT_NONE
+        mock_wrapped.getpeercert.side_effect = lambda binary_form=False: (
+            b"\x30\x82" if binary_form else {}
+        )
+        mock_context.wrap_socket.return_value.__enter__ = Mock(return_value=mock_wrapped)
+        mock_context.wrap_socket.return_value.__exit__ = Mock(return_value=None)
+
+        mock_parse_der.return_value = 45
+
+        result = check_tls("https://example.com", timeout=10, verify_tls=False)
+        assert result["check"] == "tls"
+        assert result["status"] == "pass"
+        assert result["cert_days_remaining"] == 45
+        mock_parse_der.assert_called_once()
 
     @patch("socket.create_connection")
     def test_tls_ssl_error(self, mock_create_conn):

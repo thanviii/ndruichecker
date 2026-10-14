@@ -114,10 +114,51 @@ def check_tcp(url: str, timeout: int) -> Dict[str, Any]:
         }
 
 
+def _parse_cert_expiry_from_notafter(not_after: str) -> Optional[int]:
+    """Parse notAfter string and return days remaining, or None on failure."""
+    try:
+        date_parts = not_after.split()
+        cert_expiry = datetime.strptime(f"{' '.join(date_parts[:4])}", "%b %d %H:%M:%S %Y")
+        cert_expiry = cert_expiry.replace(tzinfo=timezone.utc)
+        return (cert_expiry - datetime.now(timezone.utc)).days
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def _parse_cert_expiry_from_der(der_bytes: bytes) -> Optional[int]:
+    """Extract days remaining from a DER-encoded certificate.
+
+    Uses ssl.DER_cert_to_PEM_cert + ssl._ssl._test_decode_cert (CPython)
+    as a best-effort fallback for unverified connections where
+    getpeercert() returns {}.
+    """
+    try:
+        import tempfile
+        pem = ssl.DER_cert_to_PEM_cert(der_bytes)
+        # Write PEM to a temp file so _ssl can parse it
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="w") as f:
+            f.write(pem)
+            tmp_path = f.name
+        try:
+            cert = ssl._ssl._test_decode_cert(tmp_path)
+        finally:
+            import os
+            os.unlink(tmp_path)
+        not_after = cert.get("notAfter")
+        if not_after:
+            return _parse_cert_expiry_from_notafter(not_after)
+    except Exception:
+        pass
+    return None
+
+
 def check_tls(
     url: str, timeout: int, verify_tls: bool = True
 ) -> Dict[str, Any]:
     """Check TLS handshake and extract certificate expiry.
+
+    When verify_tls is False, connects without chain validation but still
+    reads the certificate to report expiry days.
 
     Returns:
         {
@@ -136,52 +177,20 @@ def check_tls(
         context.check_hostname = verify_tls
         context.verify_mode = ssl.CERT_REQUIRED if verify_tls else ssl.CERT_NONE
 
+        days_remaining = None
+
         with socket.create_connection((hostname, port), timeout=timeout) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                cert = ssock.getpeercert()
-
-        # Extract expiry from certificate
-        if not cert:
-            elapsed = (time.perf_counter() - start) * 1000
-            return {
-                "check": "tls",
-                "status": "fail",
-                "reason": "No certificate returned",
-                "cert_days_remaining": None,
-                "elapsed_ms": int(elapsed),
-            }
-
-        not_after = cert.get("notAfter")
-        if not not_after:
-            elapsed = (time.perf_counter() - start) * 1000
-            return {
-                "check": "tls",
-                "status": "fail",
-                "reason": "Certificate notAfter date not found",
-                "cert_days_remaining": None,
-                "elapsed_ms": int(elapsed),
-            }
-
-        # Parse certificate date (format: 'May 15 10:34:59 2025 GMT')
-        try:
-            # Remove timezone info and parse the date/time part only
-            date_parts = not_after.split()
-            # Format: Mon Day HH:MM:SS YYYY TZ
-            # Extract: Mon Day HH:MM:SS YYYY
-            cert_expiry = datetime.strptime(f"{' '.join(date_parts[:4])}", "%b %d %H:%M:%S %Y")
-            # Make it timezone-aware (UTC)
-            cert_expiry = cert_expiry.replace(tzinfo=timezone.utc)
-        except (ValueError, IndexError):
-            elapsed = (time.perf_counter() - start) * 1000
-            return {
-                "check": "tls",
-                "status": "fail",
-                "reason": f"Failed to parse certificate date: {not_after}",
-                "cert_days_remaining": None,
-                "elapsed_ms": int(elapsed),
-            }
-
-        days_remaining = (cert_expiry - datetime.now(timezone.utc)).days
+                cert = ssock.getpeercert()  # {} when CERT_NONE
+                if cert:
+                    not_after = cert.get("notAfter")
+                    if not_after:
+                        days_remaining = _parse_cert_expiry_from_notafter(not_after)
+                else:
+                    # CERT_NONE: getpeercert() returns {}, use binary form
+                    der = ssock.getpeercert(binary_form=True)
+                    if der:
+                        days_remaining = _parse_cert_expiry_from_der(der)
 
         elapsed = (time.perf_counter() - start) * 1000
         return {
@@ -194,11 +203,10 @@ def check_tls(
 
     except ssl.SSLError as e:
         elapsed = (time.perf_counter() - start) * 1000
-        reason = f"TLS: {str(e)}"
         return {
             "check": "tls",
             "status": "fail",
-            "reason": reason,
+            "reason": f"TLS: {str(e)}",
             "cert_days_remaining": None,
             "elapsed_ms": int(elapsed),
         }
@@ -336,19 +344,16 @@ def run_checks(target: Dict[str, Any]) -> Dict[str, Any]:
         results["reason"] = tcp_result["reason"]
         return results
 
-    # 3. TLS check (always run, even if verify_tls=false)
-    tls_result = check_tls(url, timeout, verify_tls=True)
+    # 3. TLS check — uses the target's verify_tls setting so self-signed
+    #    certs don't fail the handshake, while still reading cert expiry.
+    tls_result = check_tls(url, timeout, verify_tls=verify_tls)
     results["checks"].append(tls_result)
     results["cert_days_remaining"] = tls_result.get("cert_days_remaining")
 
     if tls_result["status"] == "fail":
-        if verify_tls:
-            results["status"] = "DOWN"
-            results["reason"] = tls_result["reason"]
-            return results
-        # If verify_tls=false, continue but note the warning
-        results["status"] = "WARN"
+        results["status"] = "DOWN"
         results["reason"] = tls_result["reason"]
+        return results
 
     # 4. HTTPS check
     https_result = check_https(url, timeout, expected_status, verify_tls, proxy)
