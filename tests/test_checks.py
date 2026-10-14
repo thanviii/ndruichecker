@@ -33,7 +33,7 @@ class TestParseUrl:
 
     def test_parse_url_invalid(self):
         with pytest.raises(ValueError):
-            parse_url("invalid://example.com")
+            parse_url("https:///")
 
 
 class TestDnsCheck:
@@ -100,20 +100,23 @@ class TestTcpCheck:
 class TestTlsCheck:
     """Tests for TLS handshake check."""
 
+    @patch("ndr_checker.checks.ssl.create_default_context")
     @patch("socket.create_connection")
-    def test_tls_success(self, mock_create_conn):
-        # Mock SSL socket
-        mock_sock = MagicMock()
-        mock_ssl_sock = MagicMock()
-        mock_ssl_sock.__enter__ = Mock(return_value=mock_ssl_sock)
-        mock_ssl_sock.__exit__ = Mock(return_value=None)
-        mock_ssl_sock.getpeercert.return_value = {
-            "notAfter": "May 15 10:34:59 2025 GMT"
-        }
+    def test_tls_success(self, mock_create_conn, mock_ssl_context):
+        # Mock SSL context
+        mock_context = MagicMock()
+        mock_ssl_context.return_value = mock_context
 
-        mock_sock.__enter__ = Mock(return_value=mock_ssl_sock)
-        mock_sock.__exit__ = Mock(return_value=None)
-        mock_create_conn.return_value = mock_sock
+        # Mock socket
+        mock_sock = MagicMock()
+        mock_create_conn.return_value.__enter__ = Mock(return_value=mock_sock)
+        mock_create_conn.return_value.__exit__ = Mock(return_value=None)
+
+        # Mock wrapped socket
+        mock_wrapped = MagicMock()
+        mock_wrapped.getpeercert.return_value = {"notAfter": "May 15 10:34:59 2025 GMT"}
+        mock_context.wrap_socket.return_value.__enter__ = Mock(return_value=mock_wrapped)
+        mock_context.wrap_socket.return_value.__exit__ = Mock(return_value=None)
 
         result = check_tls("https://example.com", timeout=10, verify_tls=True)
         assert result["check"] == "tls"

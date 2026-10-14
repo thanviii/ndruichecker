@@ -3,7 +3,7 @@
 import socket
 import ssl
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -164,22 +164,24 @@ def check_tls(
 
         # Parse certificate date (format: 'May 15 10:34:59 2025 GMT')
         try:
-            cert_expiry = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-        except ValueError:
-            # Fallback for different formats
-            try:
-                cert_expiry = datetime.strptime(not_after.split()[0:5], "%b %d %H:%M:%S %Y %Z")
-            except ValueError:
-                elapsed = (time.perf_counter() - start) * 1000
-                return {
-                    "check": "tls",
-                    "status": "fail",
-                    "reason": f"Failed to parse certificate date: {not_after}",
-                    "cert_days_remaining": None,
-                    "elapsed_ms": int(elapsed),
-                }
+            # Remove timezone info and parse the date/time part only
+            date_parts = not_after.split()
+            # Format: Mon Day HH:MM:SS YYYY TZ
+            # Extract: Mon Day HH:MM:SS YYYY
+            cert_expiry = datetime.strptime(f"{' '.join(date_parts[:4])}", "%b %d %H:%M:%S %Y")
+            # Make it timezone-aware (UTC)
+            cert_expiry = cert_expiry.replace(tzinfo=timezone.utc)
+        except (ValueError, IndexError):
+            elapsed = (time.perf_counter() - start) * 1000
+            return {
+                "check": "tls",
+                "status": "fail",
+                "reason": f"Failed to parse certificate date: {not_after}",
+                "cert_days_remaining": None,
+                "elapsed_ms": int(elapsed),
+            }
 
-        days_remaining = (cert_expiry - datetime.utcnow()).days
+        days_remaining = (cert_expiry - datetime.now(timezone.utc)).days
 
         elapsed = (time.perf_counter() - start) * 1000
         return {
