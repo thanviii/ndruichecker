@@ -344,16 +344,16 @@ def run_checks(target: Dict[str, Any]) -> Dict[str, Any]:
         results["reason"] = tcp_result["reason"]
         return results
 
-    # 3. TLS check — uses the target's verify_tls setting so self-signed
-    #    certs don't fail the handshake, while still reading cert expiry.
+    # 3. TLS check — best-effort cert expiry extraction. A failure here
+    #    does NOT block the HTTPS check because requests/urllib3 may
+    #    negotiate TLS differently than the raw ssl module.
     tls_result = check_tls(url, timeout, verify_tls=verify_tls)
     results["checks"].append(tls_result)
     results["cert_days_remaining"] = tls_result.get("cert_days_remaining")
 
     if tls_result["status"] == "fail":
-        results["status"] = "DOWN"
-        results["reason"] = tls_result["reason"]
-        return results
+        # Record the TLS issue but continue to the HTTPS check
+        results["tls_reason"] = tls_result["reason"]
 
     # 4. HTTPS check
     https_result = check_https(url, timeout, expected_status, verify_tls, proxy)
@@ -366,22 +366,27 @@ def run_checks(target: Dict[str, Any]) -> Dict[str, Any]:
         results["reason"] = https_result["reason"]
         return results
 
-    # Final status determination based on warnings
-    if results["status"] == "UP":
-        if results["cert_days_remaining"] is not None:
-            cert_warn_days = target.get("cert_warn_days", 30)
-            if results["cert_days_remaining"] < 0:
-                # Cert is expired but TLS check should have caught it
-                pass
-            elif results["cert_days_remaining"] < cert_warn_days:
-                results["status"] = "WARN"
-                results["reason"] = f"Certificate expires in {results['cert_days_remaining']} days"
+    # HTTPS succeeded — determine final status based on warnings
+    # TLS handshake failed but HTTPS worked (requests negotiated differently)
+    tls_reason = results.pop("tls_reason", None)
+    if tls_reason:
+        results["status"] = "WARN"
+        results["reason"] = f"TLS probe failed ({tls_reason}) but HTTPS reachable"
 
-        # Check response time warning
-        response_warn_ms = target.get("response_warn_ms", 5000)
-        if results["response_ms"] and results["response_ms"] > response_warn_ms:
-            if results["status"] != "DOWN":
-                results["status"] = "WARN"
-                results["reason"] = f"Response time {results['response_ms']}ms exceeds threshold {response_warn_ms}ms"
+    if results["cert_days_remaining"] is not None:
+        cert_warn_days = target.get("cert_warn_days", 30)
+        if results["cert_days_remaining"] < 0:
+            results["status"] = "WARN"
+            results["reason"] = f"Certificate expired {abs(results['cert_days_remaining'])} days ago"
+        elif results["cert_days_remaining"] < cert_warn_days:
+            results["status"] = "WARN"
+            results["reason"] = f"Certificate expires in {results['cert_days_remaining']} days"
+
+    # Check response time warning
+    response_warn_ms = target.get("response_warn_ms", 5000)
+    if results["response_ms"] and results["response_ms"] > response_warn_ms:
+        if results["status"] != "DOWN":
+            results["status"] = "WARN"
+            results["reason"] = f"Response time {results['response_ms']}ms exceeds threshold {response_warn_ms}ms"
 
     return results
